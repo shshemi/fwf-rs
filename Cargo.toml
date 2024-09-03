@@ -12,7 +12,7 @@ description = "Fixed Width Format(FWF) reader and writer for Rust"
 license-file = "LICENSE"
 
 [dependencies]
-thiserror = "1.0.63"
+thiserror = "~1.0"
 
 [dev-dependencies]
 rand = "0.8.5"
