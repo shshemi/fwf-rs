@@ -1,3 +1,6 @@
 mod error;
+mod reader;
 
-pub use error::Result;
+pub use error::ReaderError;
+
+pub use reader::{FwfFileReader, FwfRecord, FwfRecordIter, FwrFieldIter};
