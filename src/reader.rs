@@ -26,17 +26,17 @@ impl FwfFileReader {
         }
     }
 
-    pub fn with_separator_length(&mut self, separator_length: usize) -> &mut Self {
+    pub fn with_separator_length(mut self, separator_length: usize) -> Self {
         self.separator_length = separator_length;
         self
     }
 
-    pub fn with_flexible_width(&mut self, flexible_width: bool) -> &mut Self {
+    pub fn with_flexible_width(mut self, flexible_width: bool) -> Self {
         self.flexible_width = flexible_width;
         self
     }
 
-    pub fn with_has_header(&mut self, has_header: bool) -> &mut Self {
+    pub fn with_has_header(mut self, has_header: bool) -> Self {
         self.has_header = has_header;
         self
     }
@@ -216,8 +216,7 @@ mod tests {
         let file_path = create_test_file(content).unwrap();
         let widths = vec![7, 7, 7];
 
-        let mut reader = FwfFileReader::new(file_path.clone(), widths);
-        reader
+        let reader = FwfFileReader::new(file_path.clone(), widths)
             .with_separator_length(0)
             .with_flexible_width(false)
             .with_has_header(true);
@@ -249,8 +248,7 @@ mod tests {
         let file_path = create_test_file(content).unwrap();
         let widths = vec![3, 3, 3];
 
-        let mut reader = FwfFileReader::new(file_path.clone(), widths);
-        reader
+        let reader = FwfFileReader::new(file_path.clone(), widths)
             .with_separator_length(0)
             .with_flexible_width(false)
             .with_has_header(false);
@@ -280,8 +278,7 @@ mod tests {
         let file_path = create_test_file(content).unwrap();
         let widths = vec![3, 3, 3];
 
-        let mut reader = FwfFileReader::new(file_path.clone(), widths);
-        reader
+        let reader = FwfFileReader::new(file_path.clone(), widths)
             .with_separator_length(1)
             .with_flexible_width(false)
             .with_has_header(false);
@@ -308,8 +305,7 @@ mod tests {
         let file_path = create_test_file(content).unwrap();
         let widths = vec![3, 3, 3];
 
-        let mut reader = FwfFileReader::new(file_path.clone(), widths);
-        reader
+        let reader = FwfFileReader::new(file_path.clone(), widths)
             .with_separator_length(0)
             .with_flexible_width(true)
             .with_has_header(false);
@@ -336,8 +332,7 @@ mod tests {
         let file_path = create_test_file(content).unwrap();
         let widths = vec![3, 3, 3];
 
-        let mut reader = FwfFileReader::new(file_path.clone(), widths);
-        reader
+        let reader = FwfFileReader::new(file_path.clone(), widths)
             .with_separator_length(0)
             .with_flexible_width(false)
             .with_has_header(false);
