@@ -1,108 +1,98 @@
 use std::{
-    fs::File,
-    io::{BufRead, BufReader, Lines},
+    io::{BufRead, BufReader, Lines, Read},
     ops::Range,
-    path::PathBuf,
 };
 
 use crate::ReaderError;
 
-pub struct FwfFileReader {
-    file: PathBuf,
+#[derive(Debug)]
+pub struct Reader<R> {
+    lines: Lines<BufReader<R>>,
     widths: Vec<usize>,
     separator_length: usize,
     flexible_width: bool,
-    has_header: bool,
+    header: Option<Record>,
 }
 
-impl FwfFileReader {
-    pub fn new(file: PathBuf, widths: Vec<usize>) -> Self {
-        Self {
-            file,
+impl<R> Reader<R>
+where
+    R: Read,
+{
+    pub fn new(
+        reader: R,
+        widths: Vec<usize>,
+        separator_length: usize,
+        flexible_width: bool,
+        has_header: bool,
+    ) -> Result<Self, ReaderError> {
+        let mut lines = BufReader::new(reader).lines();
+        let header = {
+            if has_header {
+                let line = lines.next().ok_or(ReaderError::EmptyLine)??;
+                Some(Record::try_new(
+                    line,
+                    &widths,
+                    separator_length,
+                    flexible_width,
+                )?)
+            } else {
+                None
+            }
+        };
+        Ok(Self {
+            lines,
             widths,
-            separator_length: 1,
-            flexible_width: true,
-            has_header: true,
-        }
-    }
-
-    pub fn with_separator_length(mut self, separator_length: usize) -> Self {
-        self.separator_length = separator_length;
-        self
-    }
-
-    pub fn with_flexible_width(mut self, flexible_width: bool) -> Self {
-        self.flexible_width = flexible_width;
-        self
-    }
-
-    pub fn with_has_header(mut self, has_header: bool) -> Self {
-        self.has_header = has_header;
-        self
-    }
-
-    pub fn header(&self) -> Result<Option<FwfRecord>, ReaderError> {
-        Ok(if self.has_header {
-            let mut reader = BufReader::new(File::open(&self.file)?).lines();
-            let line = reader.next().ok_or(ReaderError::EmptyLine)??;
-            Some(FwfRecord::try_new(
-                line,
-                &self.widths,
-                self.separator_length,
-                self.flexible_width,
-            )?)
-        } else {
-            None
+            separator_length,
+            flexible_width,
+            header,
         })
     }
 
-    pub fn records(&self) -> Result<FwfRecordIter<BufReader<File>>, ReaderError> {
-        let mut reader = BufReader::new(File::open(&self.file)?).lines();
-        if self.has_header {
-            reader.next();
-        }
-        Ok(FwfRecordIter {
-            reader,
-            widths: self.widths.clone(),
-            separator_length: self.separator_length,
-            flexible_width: self.flexible_width,
-        })
+    pub fn header(&self) -> Option<Record> {
+        self.header.clone()
+    }
+
+    pub fn records(self) -> RecordIter<R> {
+        RecordIter { reader: self }
     }
 }
 
 #[derive(Debug)]
-pub struct FwfRecordIter<R> {
-    reader: Lines<R>,
-    widths: Vec<usize>,
-    separator_length: usize,
-    flexible_width: bool,
+pub struct RecordIter<R> {
+    reader: Reader<R>,
 }
 
-impl<R> Iterator for FwfRecordIter<R>
+impl<R> RecordIter<R> {
+    pub fn header(&self) -> Option<Record> {
+        self.reader.header.clone()
+    }
+}
+
+impl<R> Iterator for RecordIter<R>
 where
-    R: BufRead,
+    R: Read,
 {
-    type Item = Result<FwfRecord, ReaderError>;
+    type Item = Result<Record, ReaderError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.reader.next().map(|result| {
-            FwfRecord::try_new(
+        self.reader.lines.next().map(|result| {
+            Record::try_new(
                 result?,
-                &self.widths,
-                self.separator_length,
-                self.flexible_width,
+                &self.reader.widths,
+                self.reader.separator_length,
+                self.reader.flexible_width,
             )
         })
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct FwfRecord {
+pub struct Record {
     line: String,
     ranges: Vec<Range<usize>>,
 }
 
-impl FwfRecord {
+impl Record {
     pub fn try_new(
         line: String,
         widths: &[usize],
@@ -165,7 +155,7 @@ impl FwfRecord {
 
 #[derive(Debug, Clone)]
 pub struct FwrFieldIter<'a> {
-    fwr: &'a FwfRecord,
+    fwr: &'a Record,
     next: usize,
 }
 
@@ -188,8 +178,10 @@ mod tests {
     use rand::Rng;
 
     use super::*;
+    use std::fs::File;
     use std::io::Cursor;
     use std::io::Write;
+    use std::path::PathBuf;
 
     fn create_test_file(content: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let file_path = PathBuf::from(format!(
@@ -216,17 +208,21 @@ mod tests {
         let file_path = create_test_file(content).unwrap();
         let widths = vec![7, 7, 7];
 
-        let reader = FwfFileReader::new(file_path.clone(), widths)
-            .with_separator_length(0)
-            .with_flexible_width(false)
-            .with_has_header(true);
+        let reader = Reader::new(
+            File::open(file_path.clone()).unwrap(),
+            widths,
+            0,
+            false,
+            true,
+        )
+        .unwrap();
 
-        let header = reader.header().unwrap().unwrap();
+        let header = reader.header().clone().unwrap();
         assert_eq!(header.get(0), Some("header1"));
         assert_eq!(header.get(1), Some("header2"));
         assert_eq!(header.get(2), Some("header3"));
 
-        let mut records = reader.records().unwrap();
+        let mut records = reader.records();
         assert!(matches!(
             records.next().unwrap().unwrap_err(),
             ReaderError::WidthMismatch(7, 7)
@@ -248,15 +244,19 @@ mod tests {
         let file_path = create_test_file(content).unwrap();
         let widths = vec![3, 3, 3];
 
-        let reader = FwfFileReader::new(file_path.clone(), widths)
-            .with_separator_length(0)
-            .with_flexible_width(false)
-            .with_has_header(false);
+        let reader = Reader::new(
+            File::open(file_path.clone()).unwrap(),
+            widths,
+            0,
+            false,
+            false,
+        )
+        .unwrap();
 
-        let header = reader.header().unwrap();
+        let header = reader.header();
         assert!(header.is_none());
 
-        let mut records = reader.records().unwrap();
+        let mut records = reader.records();
         let record1 = records.next().unwrap().unwrap();
         assert_eq!(record1.get(0), Some("123"));
         assert_eq!(record1.get(1), Some("456"));
@@ -278,12 +278,16 @@ mod tests {
         let file_path = create_test_file(content).unwrap();
         let widths = vec![3, 3, 3];
 
-        let reader = FwfFileReader::new(file_path.clone(), widths)
-            .with_separator_length(1)
-            .with_flexible_width(false)
-            .with_has_header(false);
+        let reader = Reader::new(
+            File::open(file_path.clone()).unwrap(),
+            widths,
+            1,
+            false,
+            false,
+        )
+        .unwrap();
 
-        let mut records = reader.records().unwrap();
+        let mut records = reader.records();
         let record1 = records.next().unwrap().unwrap();
         assert_eq!(record1.get(0), Some("123"));
         assert_eq!(record1.get(1), Some("456"));
@@ -305,12 +309,16 @@ mod tests {
         let file_path = create_test_file(content).unwrap();
         let widths = vec![3, 3, 3];
 
-        let reader = FwfFileReader::new(file_path.clone(), widths)
-            .with_separator_length(0)
-            .with_flexible_width(true)
-            .with_has_header(false);
+        let reader = Reader::new(
+            File::open(file_path.clone()).unwrap(),
+            widths,
+            0,
+            true,
+            false,
+        )
+        .unwrap();
 
-        let mut records = reader.records().unwrap();
+        let mut records = reader.records();
         let record1 = records.next().unwrap().unwrap();
         assert_eq!(record1.get(0), Some("123"));
         assert_eq!(record1.get(1), Some("456"));
@@ -332,47 +340,40 @@ mod tests {
         let file_path = create_test_file(content).unwrap();
         let widths = vec![3, 3, 3];
 
-        let reader = FwfFileReader::new(file_path.clone(), widths)
-            .with_separator_length(0)
-            .with_flexible_width(false)
-            .with_has_header(false);
+        let reader = Reader::new(
+            File::open(file_path.clone()).unwrap(),
+            widths,
+            0,
+            false,
+            false,
+        )
+        .unwrap();
 
-        let header = reader.header().unwrap();
+        let header = reader.header();
         assert!(header.is_none());
 
-        let records = reader.records().unwrap();
+        let records = reader.records();
         assert!(records.into_iter().next().is_none());
 
         delete_test_file(&file_path).unwrap();
     }
 
     #[test]
-    fn test_fwf_file_reader_nonexistent_file() {
-        let file_path = PathBuf::from("nonexistent_file.txt");
-        let widths = vec![3, 3, 3];
-
-        let reader = FwfFileReader::new(file_path, widths);
-
-        let header_result = reader.header();
-        assert!(header_result.is_err());
-
-        let records_result = reader.records();
-        assert!(records_result.is_err());
-    }
-
-    #[test]
     fn test_fwf_record_iter_basic() {
         let data = "123456789\n987654321\n".as_bytes();
-        let reader = Cursor::new(data).lines();
+        let lines = BufReader::new(Cursor::new(data)).lines();
         let widths = vec![3, 3, 3];
         let separator_length = 0;
         let flexible_width = false;
 
-        let mut iter = FwfRecordIter {
-            reader,
-            widths: widths.clone(),
-            separator_length,
-            flexible_width,
+        let mut iter = RecordIter {
+            reader: Reader {
+                lines,
+                widths,
+                separator_length,
+                flexible_width,
+                header: None,
+            },
         };
 
         let record1 = iter.next().unwrap().unwrap();
@@ -389,16 +390,19 @@ mod tests {
     #[test]
     fn test_fwf_record_iter_with_flexible_width() {
         let data = "123456\n987654321\n".as_bytes();
-        let reader = Cursor::new(data).lines();
+        let lines = BufReader::new(Cursor::new(data)).lines();
         let widths = vec![3, 3, 3];
         let separator_length = 0;
         let flexible_width = true;
 
-        let mut iter = FwfRecordIter {
-            reader,
-            widths: widths.clone(),
-            separator_length,
-            flexible_width,
+        let mut iter = RecordIter {
+            reader: Reader {
+                lines,
+                widths,
+                separator_length,
+                flexible_width,
+                header: None,
+            },
         };
 
         let record1 = iter.next().unwrap().unwrap();
@@ -415,16 +419,19 @@ mod tests {
     #[test]
     fn test_fwf_record_iter_with_separator() {
         let data = "123-456-789\n987-654-321\n".as_bytes();
-        let reader = Cursor::new(data).lines();
+        let lines = BufReader::new(Cursor::new(data)).lines();
         let widths = vec![3, 3, 3];
         let separator_length = 1;
         let flexible_width = false;
 
-        let mut iter = FwfRecordIter {
-            reader,
-            widths: widths.clone(),
-            separator_length,
-            flexible_width,
+        let mut iter = RecordIter {
+            reader: Reader {
+                lines,
+                widths,
+                separator_length,
+                flexible_width,
+                header: None,
+            },
         };
 
         let record1 = iter.next().unwrap().unwrap();
@@ -441,16 +448,19 @@ mod tests {
     #[test]
     fn test_fwf_record_iter_empty_line() {
         let data = "123456789\n\n987654321\n".as_bytes();
-        let reader = Cursor::new(data).lines();
+        let lines = BufReader::new(Cursor::new(data)).lines();
         let widths = vec![3, 3, 3];
         let separator_length = 0;
         let flexible_width = false;
 
-        let mut iter = FwfRecordIter {
-            reader,
-            widths: widths.clone(),
-            separator_length,
-            flexible_width,
+        let mut iter = RecordIter {
+            reader: Reader {
+                lines,
+                widths,
+                separator_length,
+                flexible_width,
+                header: None,
+            },
         };
 
         let record1 = iter.next().unwrap().unwrap();
@@ -471,16 +481,19 @@ mod tests {
     #[test]
     fn test_fwf_record_iter_width_mismatch() {
         let data = "12345\n987654321\n".as_bytes();
-        let reader = Cursor::new(data).lines();
+        let lines = BufReader::new(Cursor::new(data)).lines();
         let widths = vec![3, 3, 3];
         let separator_length = 0;
         let flexible_width = false;
 
-        let mut iter = FwfRecordIter {
-            reader,
-            widths: widths.clone(),
-            separator_length,
-            flexible_width,
+        let mut iter = RecordIter {
+            reader: Reader {
+                lines,
+                widths,
+                separator_length,
+                flexible_width,
+                header: None,
+            },
         };
 
         let record1 = iter.next().unwrap();
@@ -500,16 +513,19 @@ mod tests {
     #[test]
     fn test_fwf_record_iter_end_of_file() {
         let data = "123456789".as_bytes(); // No newline at the end
-        let reader = Cursor::new(data).lines();
+        let lines = BufReader::new(Cursor::new(data)).lines();
         let widths = vec![3, 3, 3];
         let separator_length = 0;
         let flexible_width = false;
 
-        let mut iter = FwfRecordIter {
-            reader,
-            widths: widths.clone(),
-            separator_length,
-            flexible_width,
+        let mut iter = RecordIter {
+            reader: Reader {
+                lines,
+                widths,
+                separator_length,
+                flexible_width,
+                header: None,
+            },
         };
 
         let record1 = iter.next().unwrap().unwrap();
@@ -526,7 +542,7 @@ mod tests {
         let sep_len = 0;
         let flexible_widths = false;
 
-        let record = FwfRecord::try_new(line.clone(), &widths, sep_len, flexible_widths);
+        let record = Record::try_new(line.clone(), &widths, sep_len, flexible_widths);
 
         assert!(record.is_ok());
         let record = record.unwrap();
@@ -541,7 +557,7 @@ mod tests {
         let sep_len = 0;
         let flexible_widths = true;
 
-        let record = FwfRecord::try_new(line.clone(), &widths, sep_len, flexible_widths);
+        let record = Record::try_new(line.clone(), &widths, sep_len, flexible_widths);
 
         assert!(record.is_ok());
         let record = record.unwrap();
@@ -556,7 +572,7 @@ mod tests {
         let sep_len = 0;
         let flexible_widths = false;
 
-        let record = FwfRecord::try_new(line, &widths, sep_len, flexible_widths);
+        let record = Record::try_new(line, &widths, sep_len, flexible_widths);
 
         assert!(record.is_err());
         let err = record.unwrap_err();
@@ -570,7 +586,7 @@ mod tests {
         let sep_len = 1;
         let flexible_widths = false;
 
-        let record = FwfRecord::try_new(line.clone(), &widths, sep_len, flexible_widths);
+        let record = Record::try_new(line.clone(), &widths, sep_len, flexible_widths);
 
         assert!(record.is_ok());
         let record = record.unwrap();
@@ -585,7 +601,7 @@ mod tests {
         let sep_len = 0;
         let flexible_widths = false;
 
-        let record = FwfRecord::try_new(line.clone(), &widths, sep_len, flexible_widths).unwrap();
+        let record = Record::try_new(line.clone(), &widths, sep_len, flexible_widths).unwrap();
 
         assert_eq!(record.get(0), Some("123"));
         assert_eq!(record.get(1), Some("456"));
@@ -600,7 +616,7 @@ mod tests {
         let sep_len = 0;
         let flexible_widths = false;
 
-        let record = FwfRecord::try_new(line.clone(), &widths, sep_len, flexible_widths).unwrap();
+        let record = Record::try_new(line.clone(), &widths, sep_len, flexible_widths).unwrap();
         let fields: Vec<&str> = record.iter().collect();
 
         assert_eq!(fields, vec!["123", "456", "789"]);
@@ -613,7 +629,7 @@ mod tests {
         let sep_len = 0;
         let flexible_widths = false;
 
-        let record = FwfRecord::try_new(line, &widths, sep_len, flexible_widths);
+        let record = Record::try_new(line, &widths, sep_len, flexible_widths);
 
         assert!(record.is_err());
         let err = record.unwrap_err();
