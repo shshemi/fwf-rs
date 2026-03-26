@@ -3,4 +3,4 @@ mod reader;
 
 pub use error::ReaderError;
 
-pub use reader::{FwrFieldIter, Reader, Record, RecordIter};
+pub use reader::{FwfFieldIter, Reader, Record, RecordIter};

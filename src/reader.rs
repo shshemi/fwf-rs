@@ -148,24 +148,26 @@ impl Record {
             .and_then(|range| self.line.get(range))
     }
 
-    pub fn iter(&self) -> FwrFieldIter {
-        FwrFieldIter { fwr: self, next: 0 }
+    pub fn iter(&self) -> FwfFieldIter<'_> {
+        FwfFieldIter {
+            fwr: self,
+            index: 0,
+        }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct FwrFieldIter<'a> {
+pub struct FwfFieldIter<'a> {
     fwr: &'a Record,
-    next: usize,
+    index: usize,
 }
 
-impl<'a> Iterator for FwrFieldIter<'a> {
+impl<'a> Iterator for FwfFieldIter<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.fwr.get(self.next).map(|slice| {
-            self.next += 1;
-            slice
+        self.fwr.get(self.index).inspect(|_| {
+            self.index += 1;
         })
     }
 }
@@ -173,11 +175,9 @@ impl<'a> Iterator for FwrFieldIter<'a> {
 #[cfg(test)]
 mod tests {
 
-    use rand::distributions::Alphanumeric;
-    use rand::thread_rng;
-    use rand::Rng;
-
     use super::*;
+    use rand::RngExt;
+    use rand::distr::Alphanumeric;
     use std::fs::File;
     use std::io::Cursor;
     use std::io::Write;
@@ -186,7 +186,7 @@ mod tests {
     fn create_test_file(content: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let file_path = PathBuf::from(format!(
             "test_fwf_file_{}.txt",
-            thread_rng()
+            rand::rng()
                 .sample_iter(Alphanumeric)
                 .take(16)
                 .map(char::from)
