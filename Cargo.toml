@@ -1,6 +1,6 @@
 [package]
 name = "fwf-rs"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 authors = ["Shayan Hashemi <shshemi@gmail.com>"]
 keywords = ["FWF","Fixed-width", "Reader", "Writer"]
@@ -9,6 +9,7 @@ documentation = "https://docs.rs/fwf-rs/latest/fwf_rs/"
 repository = "https://github.com/shshemi/fwf-rs"
 readme = "README.md"
 description = "Fixed Width Format(FWF) reader and writer for Rust"
+license = "MIT"
 license-file = "LICENSE"
 
 [dependencies]
